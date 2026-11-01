@@ -1,0 +1,68 @@
+{
+  "color": [
+    {
+      "name": "start_window_background",
+      "value": "#F3F7FD"
+    },
+    {
+      "name": "background",
+      "value": "#F3F7FD"
+    },
+    {
+      "name": "surface",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "soft_surface",
+      "value": "#EAF0F8"
+    },
+    {
+      "name": "text_primary",
+      "value": "#1D2D43"
+    },
+    {
+      "name": "text_secondary",
+      "value": "#6C7E94"
+    },
+    {
+      "name": "brand",
+      "value": "#3068DB"
+    },
+    {
+      "name": "brand_soft",
+      "value": "#DFEAFF"
+    },
+    {
+      "name": "divider",
+      "value": "#E2EAF4"
+    },
+    {
+      "name": "success",
+      "value": "#348672"
+    },
+    {
+      "name": "error",
+      "value": "#C44D62"
+    },
+    {
+      "name": "hero",
+      "value": "#DFEAFF"
+    },
+    {
+      "name": "inverse_text",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "brand_ink",
+      "value": "#234C9B"
+    },
+    {
+      "name": "dock_light",
+      "value": "#C5DDFF"
+    },
+    {
+      "name": "dock_fallback",
+      "value": "#EEFFFFFF"
+    }
+  ]
+}

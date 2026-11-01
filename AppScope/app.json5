@@ -1,0 +1,11 @@
+{
+  "app": {
+    "bundleName": "com.lovexjy.LumiKit",
+    "vendor": "example",
+    "versionCode": 200612083,
+    "versionName": "1.2.0",
+    "buildVersion": "1",
+    "icon": "$media:lumi_app_icon",
+    "label": "$string:app_name"
+  }
+}

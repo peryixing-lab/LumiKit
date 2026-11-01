@@ -1,0 +1,20 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "集萤 LumiKit · 让繁杂，变简单。"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "集萤 LumiKit · 让繁杂，变简单。"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "集萤"
+    },
+    {
+      "name": "calendar_reminder_reason",
+      "value": "用于在本机日历中创建和更新保修、借出到期提醒，仅管理集萤创建的日程。"
+    }
+  ]
+}

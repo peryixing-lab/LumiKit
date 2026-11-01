@@ -1,0 +1,39 @@
+{
+  "routerMap": [
+    {
+      "name": "fileTool",
+      "pageSourceFile": "src/main/ets/features/files/FileToolsPage.ets",
+      "buildFunction": "fileToolBuilder"
+    },
+    {
+      "name": "analytics",
+      "pageSourceFile": "src/main/ets/features/analytics/AnalyticsPage.ets",
+      "buildFunction": "analyticsBuilder"
+    },
+    {
+      "name": "inventory",
+      "pageSourceFile": "src/main/ets/features/inventory/InventoryPage.ets",
+      "buildFunction": "inventoryBuilder"
+    },
+    {
+      "name": "forms",
+      "pageSourceFile": "src/main/ets/features/forms/FormsPage.ets",
+      "buildFunction": "formsBuilder"
+    },
+    {
+      "name": "developer",
+      "pageSourceFile": "src/main/ets/features/developer/DeveloperPage.ets",
+      "buildFunction": "developerBuilder"
+    },
+    {
+      "name": "help",
+      "pageSourceFile": "src/main/ets/features/help/HelpPage.ets",
+      "buildFunction": "helpBuilder"
+    },
+    {
+      "name": "workflow",
+      "pageSourceFile": "src/main/ets/features/workbench/FlowPage.ets",
+      "buildFunction": "lumiFlowBuilder"
+    }
+  ]
+}

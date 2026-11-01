@@ -1,0 +1,42 @@
+# DevEco Studio and local SDK configuration
+.idea/
+local.properties
+build-profile.local.json5
+
+# Dependencies, builds, and tool caches
+node_modules/
+oh_modules/
+**/build/
+.hvigor/
+.cache/
+.cxx/
+.appanalyzer/
+**/.preview/
+**/.test/
+__pycache__/
+*.py[cod]
+
+# Local signing material and distribution packages
+*.p12
+*.p7b
+*.cer
+*.jks
+*.keystore
+*.hap
+*.app
+
+# Local export and validation captures
+/exports/
+/docs/validation/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.env
+.env.*
+!.env.example
+
+# Emulator validation captures
+/docs/screenshots/emulator/
