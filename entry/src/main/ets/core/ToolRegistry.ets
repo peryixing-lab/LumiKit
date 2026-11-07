@@ -53,12 +53,36 @@ export const TOOLS: ToolDescriptor[] = [
   { id: 'analytics', name: '表格数据分析', description: 'CSV / Excel 导入、统计与图表导出', category: 'analytics', icon: 'tool-analytics', supportedTypes: ['text/csv', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'] }
 ];
 
+class LumiToolSearchAliases {
+  toolId: string = '';
+  phrases: string[] = [];
+}
+
+/** Local scene vocabulary: suggestions still lead to an existing tool. */
+const TOOL_SEARCH_ALIASES: LumiToolSearchAliases[] = [
+  { toolId: 'image-compress', phrases: ['缩小照片', '缩小图片', '照片太大', '图片太大', '减小图片体积', '压缩照片', '报名', '证件照'] },
+  { toolId: 'image-convert', phrases: ['换图片格式', '换照片格式', '照片转格式', '改图片尺寸', '调整照片大小', '报名', '证件照'] },
+  { toolId: 'image-ocr', phrases: ['识字', '图片提取文字', '照片提取文字', '截图提取文字', '拍照识字', '截图识字', '票据文字', '发票识别'] },
+  { toolId: 'pdf-compress', phrases: ['文档太大', 'PDF太大', '缩小PDF', '减小PDF体积', '提交材料', '报销', '报名'] },
+  { toolId: 'pdf-edit', phrases: ['调整页序', '换页顺序', '文档旋转', '删除页面', '整理材料', '提交材料', '报名'] },
+  { toolId: 'pdf-merge', phrases: ['合并材料', '合并文档', '拼接PDF', '合成一份', '提交材料', '报销', '报名'] },
+  { toolId: 'pdf-split', phrases: ['文档拆开', '一页一份', '拆开材料'] },
+  { toolId: 'pdf-extract', phrases: ['取出几页', '保留几页', '只要几页', '抽取页面'] },
+  { toolId: 'pdf-images', phrases: ['PDF转照片', 'PDF转截图', '文档转图片'] },
+  { toolId: 'images-pdf', phrases: ['照片转PDF', '截图转PDF', '合并截图', '照片合成文档', '合并材料', '报销', '报名'] },
+  { toolId: 'inventory', phrases: ['保修', '购买凭证', '发票', '借东西', '借出归还', '登记物品'] },
+  { toolId: 'forms', phrases: ['报名表', '登记表', '检查表', '填写表单'] },
+  { toolId: 'analytics', phrases: ['统计表格', '统计数据', 'Excel统计', '表格画图', '销售汇总'] }
+];
+
 export class ToolRegistry {
   static find(id: string): ToolDescriptor | undefined { return TOOLS.find((tool: ToolDescriptor) => tool.id === id); }
   static search(query: string, category: string = 'all'): ToolDescriptor[] {
-    const term = query.trim().toLowerCase();
+    const term = query.trim().toLowerCase().replace(/\s+/g, '');
     return TOOLS.filter((tool: ToolDescriptor) => (category === 'all' || tool.category === category) &&
-      (term.length === 0 || `${tool.name} ${tool.description} ${tool.id}`.toLowerCase().includes(term)));
+      (term.length === 0 || `${tool.name} ${tool.description} ${tool.id}`.toLowerCase().replace(/\s+/g, '').includes(term) ||
+        TOOL_SEARCH_ALIASES.some((entry: LumiToolSearchAliases): boolean => entry.toolId === tool.id &&
+          entry.phrases.some((phrase: string): boolean => phrase.toLowerCase().replace(/\s+/g, '').includes(term)))));
   }
   static forMime(mime: string): ToolDescriptor[] {
     return TOOLS.filter((tool: ToolDescriptor) => tool.supportedTypes.some((type: string) =>

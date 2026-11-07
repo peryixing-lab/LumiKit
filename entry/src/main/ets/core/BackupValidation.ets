@@ -4,6 +4,7 @@ import { LocalForm, FormResponse, validForm, validResponse } from '../features/f
 import { LumiFilePreset, validFilePreset } from '../features/files/FilePresets';
 import { LumiFormDraft, validFormDraft } from '../features/forms/FormDrafts';
 import { ToolRegistry } from './ToolRegistry';
+import { LumiMaterialPack, LumiMaterialTemplate, validMaterialPack, validMaterialTemplate } from '../features/materials/MaterialPackModels';
 
 class SavedAnalysis {
   id: string = '';
@@ -19,6 +20,8 @@ function uniqueIds(ids: string[]): boolean {
 /** Reject malformed domain data before a restore can replace a valid module. */
 export function validateBackupDocument(key: string, value: string): boolean {
   switch (key) {
+    case 'material.packs': { const packs = JSON.parse(value) as LumiMaterialPack[]; return Array.isArray(packs) && packs.length <= 30 && packs.every(validMaterialPack) && uniqueIds(packs.map((pack: LumiMaterialPack): string => pack.id)); }
+    case 'material.templates': { const templates = JSON.parse(value) as LumiMaterialTemplate[]; return Array.isArray(templates) && templates.length <= 30 && templates.every(validMaterialTemplate) && uniqueIds(templates.map((template: LumiMaterialTemplate): string => template.id)); }
     case 'workspace.collections': { const entries = JSON.parse(value) as LumiCollection[]; return Array.isArray(entries) && entries.every(validCollection) && uniqueIds(entries.map((entry: LumiCollection) => entry.id)); }
     case 'workbench.recipes': { const entries = JSON.parse(value) as LumiFlowRecipe[]; return Array.isArray(entries) && entries.length <= 30 && entries.every(validFlowRecipe) && uniqueIds(entries.map((entry: LumiFlowRecipe) => entry.id)); }
     case 'forms.autodraft': { const draft = JSON.parse(value) as LumiFormDraft; return draft === null || validFormDraft(draft); }

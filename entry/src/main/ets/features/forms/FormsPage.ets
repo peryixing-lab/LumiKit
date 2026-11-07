@@ -12,6 +12,7 @@ import { buildJsonSchema, csvCell, FieldAnswer, FIELD_NAMES, FIELD_TYPES, fieldT
 import { LumiFormDraft, validFormDraft, copyForm, formTemplate } from './FormDrafts';
 import { LumiRecordRouteParam } from '../../core/IncomingRequest';
 import { FormPdfService } from './FormPdfService';
+import { EcosystemBridge } from '../../core/EcosystemBridge';
 
 @Builder
 export function formsBuilder() {
@@ -545,6 +546,8 @@ export struct FormsPage {
       }.width('100%')
       Button('PDF 空白 / 打印模板').id('forms-export-template-pdf').fontSize(13).height(42).width('100%').backgroundColor($r('app.color.soft_surface'))
         .fontColor($r('app.color.brand')).enabled(!this.busy).onClick(() => this.exportPdf())
+      Button('沉淀汇总报告到知萤笔记').id('forms-share-summary-lexinote').fontSize(13).height(42).width('100%').backgroundColor($r('app.color.brand_soft'))
+        .fontColor($r('app.color.brand')).enabled(!this.busy).onClick(() => this.shareFormSummaryToLexiNote())
       Text('表单与回答仅保存在本机。导出的回答包含附件信息，附件文件可在回答详情中单独导出。')
         .fontSize(11).lineHeight(18).fontColor($r('app.color.text_secondary'))
     }.padding(20).width('100%').backgroundColor($r('app.color.surface')).borderRadius(22).alignItems(HorizontalAlign.Start)
@@ -694,6 +697,30 @@ export struct FormsPage {
     } catch (error) { this.toast('附件导出失败'); }
   }
 
+  private async shareFormSummaryToLexiNote(): Promise<void> {
+    if (this.busy || !this.draft.title.trim()) { this.toast('请先填写表单标题'); return; }
+    try {
+      const list = this.formResponses(this.draft.id);
+      const md = EcosystemBridge.buildFormSummaryMarkdown(this.draft, list);
+      await EcosystemBridge.shareMarkdownToLexiNote(this.context(), `${this.draft.title}_收集汇总`, md, 'forms', '导出表单汇总到知萤');
+      this.toast('表单汇总笔记已生成，可在分享面板选择「知萤」');
+    } catch (error) {
+      this.toast((error as Error).message || '暂时无法打开系统分享面板');
+    }
+  }
+
+  private async shareResponseToLexiNote(): Promise<void> {
+    if (this.busy || !this.selectedResponse.id) { return; }
+    try {
+      const md = EcosystemBridge.buildFormResponseMarkdown(this.draft, this.selectedResponse);
+      const title = `${this.selectedResponse.formTitle || this.draft.title || '表单'}_回答记录`;
+      await EcosystemBridge.shareMarkdownToLexiNote(this.context(), title, md, 'forms', '导出表单回答到知萤');
+      this.toast('回答记录笔记已生成，可在分享面板选择「知萤」');
+    } catch (error) {
+      this.toast((error as Error).message || '暂时无法打开系统分享面板');
+    }
+  }
+
   @Builder
   private responseDetail() {
     Column({ space: 16 }) {
@@ -715,6 +742,8 @@ export struct FormsPage {
       }, (answer: FieldAnswer) => answer.fieldId)
       Button(this.busy ? '正在生成 PDF…' : '导出这份回答 PDF').id('forms-export-response-pdf').height(48).width('100%').backgroundColor($r('app.color.brand')).fontColor($r('app.color.inverse_text'))
         .enabled(!this.busy).onClick(() => this.exportPdf(this.selectedResponse))
+      Button('沉淀这份回答到知萤笔记').id('forms-share-response-lexinote').height(46).width('100%').backgroundColor($r('app.color.brand_soft')).fontColor($r('app.color.brand'))
+        .enabled(!this.busy).onClick(() => this.shareResponseToLexiNote())
       Button('删除这份回答').id('forms-response-delete').height(46).width('100%').backgroundColor($r('app.color.surface')).fontColor($r('app.color.error')).enabled(!this.busy)
         .onClick(() => this.deleteResponse())
     }.width('100%')

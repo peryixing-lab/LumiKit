@@ -19,6 +19,9 @@ import { preparePdfPages, LumiPdfPageEdit } from './PdfEnhancements';
 import { LumiFilePreset, validFilePreset } from './FilePresets';
 import { OcrService } from '../ocr/OcrService';
 import { FilePreview } from './FilePreview';
+import { EcosystemBridge } from '../../core/EcosystemBridge';
+import { BatchFileService, LumiBatchOutcome, batchOutcomeLabel } from '../../core/BatchFileService';
+import { WorkspaceSearch } from '../../core/WorkspaceSearch';
 
 class FilePreviewRequest {
   id: number = 0;
@@ -50,6 +53,11 @@ export struct FileToolsPage {
   @State workspaceQuery: string = '';
   @State workspaceCollection: string = '';
   @State showTrash: boolean = false;
+  @State workspaceRole: string = '';
+  @State workspaceSelecting: boolean = false;
+  @State workspaceSelection: string[] = [];
+  @State batchTags: string = '';
+  @State batchCollectionId: string = '';
   @State libraryLimit: number = 20;
   @State collections: LumiCollection[] = [];
   @State sessionNotice: string = '';
@@ -91,6 +99,9 @@ export struct FileToolsPage {
       this.getUIContext().getPromptAction().showToast({ message: '任务处理中，请先完成或取消任务' });
       return true;
     }
+    if (this.toolId === 'file-workspace' && this.workspaceSelecting) {
+      this.workspaceSelecting = false; this.clearWorkspaceSelection(); return true;
+    }
     return false;
   }
   private leavePage(): void {
@@ -105,16 +116,63 @@ export struct FileToolsPage {
       this.collections = await WorkbenchStore.collections();
       const outputPaths = this.outputs.map((file: WorkspaceFile) => file.path);
       this.outputs = this.library.filter((file: WorkspaceFile) => outputPaths.includes(file.path) && !file.trashedAt);
+      this.workspaceSelection = this.workspaceSelection.filter((path: string): boolean => this.library.some((file: WorkspaceFile): boolean => file.path === path && !!file.trashedAt === this.showTrash));
     } catch (error) { this.fail(error as Error); }
   }
   private collectionOptions(): SelectOption[] {
     const options: SelectOption[] = [{ value: '全部集合' }];
     return options.concat(this.collections.map((entry: LumiCollection): SelectOption => ({ value: entry.name })));
   }
+  private batchCollectionOptions(): SelectOption[] {
+    const options: SelectOption[] = [{ value: '未归组' }];
+    return options.concat(this.collections.map((group: LumiCollection): SelectOption => ({ value: group.name })));
+  }
   private visibleLibrary(): WorkspaceFile[] {
     return this.library.filter((file: WorkspaceFile) => !!file.trashedAt === this.showTrash &&
       (!this.workspaceCollection || file.collectionId === this.workspaceCollection || this.library.some((related: WorkspaceFile) => related.collectionId === this.workspaceCollection && (related.sourcePaths || []).includes(file.path))) &&
-      (file.name + ' ' + (file.tags || []).join(' ')).toLowerCase().includes(this.workspaceQuery.trim().toLowerCase()));
+      (!this.workspaceRole || (file.role || 'source') === this.workspaceRole) &&
+      WorkspaceSearch.matches(file, this.workspaceQuery, this.collections));
+  }
+  private clearWorkspaceSelection(): void { this.workspaceSelection = []; }
+  private selectWorkspaceFile(file: WorkspaceFile): void {
+    if (this.busy) { return; }
+    this.workspaceSelecting = true;
+    if (this.workspaceSelection.includes(file.path)) { this.workspaceSelection = this.workspaceSelection.filter((path: string): boolean => path !== file.path); }
+    else if (this.workspaceSelection.length >= BatchFileService.MAX_FILES) { this.message = '一次最多选择 100 个文件，请分批操作'; this.isError = true; }
+    else { this.workspaceSelection = this.workspaceSelection.concat([file.path]); }
+  }
+  private selectVisibleWorkspace(): void {
+    const visible = this.visibleLibrary();
+    if (visible.length > BatchFileService.MAX_FILES) { this.message = '当前筛选超过 100 个文件，请缩小筛选范围或分批选择'; this.isError = true; return; }
+    this.workspaceSelection = visible.map((file: WorkspaceFile): string => file.path);
+  }
+  private workspaceSelectedFiles(): WorkspaceFile[] {
+    return this.library.filter((file: WorkspaceFile): boolean => this.workspaceSelection.includes(file.path));
+  }
+  private async runWorkspaceBatch(kind: string): Promise<void> {
+    if (this.busy) { return; }
+    const files = this.workspaceSelectedFiles();
+    if (!files.length) { this.fail(new Error('请先选择文件')); return; }
+    if (kind === 'tags' && !this.batchTags.split(/[,，]/).some((tag: string): boolean => !!tag.trim())) { this.fail(new Error('请填写要追加的标签，以逗号分隔')); return; }
+    if (kind === 'trash') {
+      const choice = await this.getUIContext().getPromptAction().showDialog({ title: '将所选文件移入回收站？', message: '将处理 ' + files.length.toString() + ' 个文件。关联物品、表单、材料包或未完成任务的文件会保留并说明原因。', buttons: [{ text: '取消', color: '#64748B' }, { text: '移入回收站', color: '#C44D62' }] });
+      if (choice.index !== 1) { return; }
+    }
+    this.busy = true; this.message = '正在处理所选文件…'; this.isError = false;
+    try {
+      if (kind === 'share') { await BatchFileService.share(this.ctx(), files); this.message = '已打开所选文件的系统分享面板'; }
+      else if (kind === 'export') { await BatchFileService.exportFiles(this.ctx(), files); this.message = '已导出 ' + files.length.toString() + ' 个文件'; }
+      else if (kind === 'archive') {
+        const archive = await BatchFileService.archive(this.ctx(), files, '文件合集');
+        this.message = '已生成 ' + archive.name + '，可在工作区导出或分享';
+      } else {
+        const outcome: LumiBatchOutcome = await BatchFileService.organize(this.ctx(), files, kind, this.batchTags.split(/[,，]/), this.batchCollectionId);
+        this.workspaceSelection = this.workspaceSelection.filter((path: string): boolean => !outcome.succeeded.includes(path));
+        this.message = batchOutcomeLabel(outcome); this.isError = outcome.failed.length > 0;
+      }
+      await this.refresh();
+    } catch (error) { this.fail(error as Error); }
+    finally { this.busy = false; }
   }
   private scheduleSession(): void {
     if (!this.sessionReady || this.isText() || this.toolId === 'file-workspace') { return; }
@@ -480,6 +538,27 @@ export struct FileToolsPage {
     try { await pasteboard.getSystemPasteboard().setData(pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, this.output)); this.message = '识别文字已复制'; this.isError = false; }
     catch (error) { this.fail(error as Error); }
   }
+  private async shareOcrToLexiNote(): Promise<void> {
+    try {
+      const baseTitle = this.outputBaseName();
+      const md = EcosystemBridge.buildOcrNoteMarkdown(baseTitle, this.output, this.selected[0]?.name || '');
+      await EcosystemBridge.shareMarkdownToLexiNote(this.ctx(), baseTitle, md, this.toolId, '沉淀识别文字到知萤笔记');
+      await this.refresh();
+      this.message = '已生成双链 Markdown 并保存在工作区，可在分享面板选择「知萤」';
+      this.isError = false;
+    } catch (error) {
+      this.fail(error as Error);
+    }
+  }
+  private async sendOcrToLexiGlow(asArticle: boolean): Promise<void> {
+    try {
+      await EcosystemBridge.openInLexiGlow(this.ctx(), this.outputBaseName(), this.output, asArticle);
+      this.message = asArticle ? '已发送至词萤伴读' : '已发送至词萤提取生词';
+      this.isError = false;
+    } catch (error) {
+      this.fail(error as Error);
+    }
+  }
 
   @Builder
   private pdfOrganizer() {
@@ -508,7 +587,41 @@ export struct FileToolsPage {
   }
   @Builder
   private resultRow(file: WorkspaceFile, workspace: boolean) {
-    LumiResultCard({ file: file, onChanged: () => { this.refresh(); }, actions: this.nextActions(file) })
+    LumiResultCard({ file: file, onChanged: () => { this.refresh(); }, actions: this.nextActions(file),
+      selectable: workspace, selecting: workspace && this.workspaceSelecting,
+      selectionChecked: this.workspaceSelection.includes(file.path),
+      onSelect: () => { this.selectWorkspaceFile(file); }, onLongSelect: () => { this.selectWorkspaceFile(file); } })
+      .enabled(!this.busy)
+  }
+
+  @Builder
+  private workspaceBatchBar() {
+    Column({ space: 12 }) {
+      Row({ space: 8 }) {
+        Text('已选择 ' + this.workspaceSelection.length.toString() + ' 个').fontSize(14).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary')).layoutWeight(1)
+        Button('全选筛选结果').id('workspace-select-all').fontSize(12).onClick(() => { this.selectVisibleWorkspace(); })
+        Button('清空').fontSize(12).onClick(() => { this.clearWorkspaceSelection(); })
+      }.width('100%')
+      if (!this.showTrash) {
+        Row({ space: 8 }) {
+          Button('导出所选').id('workspace-batch-export').layoutWeight(1).fontSize(13).onClick(() => { this.runWorkspaceBatch('export'); })
+          Button('分享所选').id('workspace-batch-share').layoutWeight(1).fontSize(13).onClick(() => { this.runWorkspaceBatch('share'); })
+          Button('ZIP 打包').id('workspace-batch-archive').layoutWeight(1).fontSize(13).onClick(() => { this.runWorkspaceBatch('archive'); })
+        }.width('100%')
+        Row({ space: 8 }) {
+          TextInput({ text: this.batchTags, placeholder: '追加标签，以逗号分隔' }).id('workspace-batch-tags').maxLength(240).layoutWeight(1).onChange((text: string) => { this.batchTags = text; })
+          Button('添加标签').fontSize(12).onClick(() => { this.runWorkspaceBatch('tags'); })
+        }.width('100%')
+        Row({ space: 8 }) {
+          Select(this.batchCollectionOptions()).value(this.collections.find((group: LumiCollection): boolean => group.id === this.batchCollectionId)?.name || '未归组').onSelect((index: number) => { this.batchCollectionId = index > 0 ? this.collections[index - 1].id : ''; }).layoutWeight(1)
+          Button('移入集合').fontSize(12).onClick(() => { this.runWorkspaceBatch('collection'); })
+        }.width('100%')
+        Button('移入回收站').id('workspace-batch-trash').fontColor($r('app.color.error')).width('100%').onClick(() => { this.runWorkspaceBatch('trash'); })
+      } else {
+        Button('恢复所选文件').id('workspace-batch-restore').width('100%').onClick(() => { this.runWorkspaceBatch('restore'); })
+      }
+      Text('每批最多 100 个文件；导出、分享与打包总大小不超过 500 MB。').fontSize(11).fontColor($r('app.color.text_secondary')).width('100%')
+    }.padding(16).width('100%').backgroundColor($r('app.color.brand_soft')).borderRadius(20).enabled(!this.busy)
   }
 
   @Builder
@@ -528,13 +641,18 @@ export struct FileToolsPage {
         Column({ space: 18 }) {
           if (this.toolId === 'file-workspace') {
             this.sectionLabel('你的文件，集中有序', '导入副本与处理结果都保存在这里，可继续导出、预览和分享。')
-            Button('＋ 导入文件').width('100%').height(52).backgroundColor($r('app.color.brand')).fontColor($r('app.color.inverse_text')).onClick(() => this.pick())
-            if (this.library.length === 0) { Text('工作区还是空的\n导入第一份文件，开始你的工作流。').fontSize(15).fontColor($r('app.color.text_secondary')).lineHeight(25).textAlign(TextAlign.Center).padding(40) }
-            TextInput({ text: this.workspaceQuery, placeholder: '搜索文件名或标签' }).id('workspace-search').onChange((text: string) => { this.workspaceQuery = text; this.libraryLimit = 20; })
             Row({ space: 8 }) {
-              Button(this.showTrash ? '查看工作区' : '回收站').id('workspace-trash').onClick(() => { this.showTrash = !this.showTrash; this.libraryLimit = 20; })
-              Select(this.collectionOptions()).value(this.collections.find((entry: LumiCollection) => entry.id === this.workspaceCollection)?.name || '全部集合').onSelect((index: number) => { this.workspaceCollection = index > 0 ? this.collections[index - 1].id : ''; this.libraryLimit = 20; })
-            }.width('100%')
+              Button('＋ 导入文件').layoutWeight(1).height(52).backgroundColor($r('app.color.brand')).fontColor($r('app.color.inverse_text')).onClick(() => this.pick())
+              Button(this.workspaceSelecting ? '退出多选' : '多选整理').id('workspace-select-mode').height(52).fontColor($r('app.color.brand')).onClick(() => { this.workspaceSelecting = !this.workspaceSelecting; this.clearWorkspaceSelection(); })
+            }.width('100%').enabled(!this.busy)
+            if (this.library.length === 0) { Text('工作区还是空的\n导入第一份文件，开始你的工作流。').fontSize(15).fontColor($r('app.color.text_secondary')).lineHeight(25).textAlign(TextAlign.Center).padding(40) }
+            TextInput({ text: this.workspaceQuery, placeholder: '搜索文件名、标签或集合' }).id('workspace-search').enabled(!this.busy).onChange((text: string) => { this.workspaceQuery = text; this.libraryLimit = 20; this.clearWorkspaceSelection(); })
+            Row({ space: 8 }) {
+              Button(this.showTrash ? '查看工作区' : '回收站').id('workspace-trash').onClick(() => { this.showTrash = !this.showTrash; this.libraryLimit = 20; this.clearWorkspaceSelection(); })
+              Select(this.collectionOptions()).value(this.collections.find((entry: LumiCollection) => entry.id === this.workspaceCollection)?.name || '全部集合').onSelect((index: number) => { this.workspaceCollection = index > 0 ? this.collections[index - 1].id : ''; this.libraryLimit = 20; this.clearWorkspaceSelection(); })
+            }.width('100%').enabled(!this.busy)
+            Select([{ value: '全部文件' }, { value: '原件' }, { value: '中间结果' }, { value: '最终成果' }]).value(this.workspaceRole === 'source' ? '原件' : this.workspaceRole === 'intermediate' ? '中间结果' : this.workspaceRole === 'final' ? '最终成果' : '全部文件').enabled(!this.busy).onSelect((index: number) => { this.workspaceRole = ['', 'source', 'intermediate', 'final'][index]; this.libraryLimit = 20; this.clearWorkspaceSelection(); })
+            if (this.workspaceSelecting) { this.workspaceBatchBar() }
             if (this.showTrash) { Text('恢复后会保留原来的集合、标签和来源。').fontSize(12).fontColor($r('app.color.text_secondary')) }
             if (this.visibleLibrary().length === 0) { Text('没有符合条件的文件').fontColor($r('app.color.text_secondary')).padding(24) }
             ForEach(this.visibleLibrary().slice(0, this.libraryLimit), (file: WorkspaceFile) => { this.resultRow(file, true) }, (file: WorkspaceFile) => JSON.stringify(file))
@@ -635,7 +753,16 @@ export struct FileToolsPage {
             if (this.toolId === 'image-ocr') {
               Image(this.selected[0]?.path || '').width('100%').height(220).objectFit(ImageFit.Contain)
               TextArea({ text: this.output }).height(220).onChange((text: string) => { this.output = text; })
-              Button('复制识别文字').id('ocr-copy').onClick(() => this.copyOcr())
+              Row({ space: 8 }) {
+                Button('复制识别文字').id('ocr-copy').layoutWeight(1).height(42).fontSize(13).backgroundColor($r('app.color.brand_soft')).fontColor($r('app.color.brand')).onClick(() => this.copyOcr())
+                Button('沉淀到知萤笔记').id('ocr-share-lexinote').layoutWeight(1).height(42).fontSize(13).backgroundColor($r('app.color.brand_soft')).fontColor($r('app.color.brand')).onClick(() => this.shareOcrToLexiNote())
+              }.width('100%')
+              if (/[A-Za-z]{3,}/.test(this.output)) {
+                Row({ space: 8 }) {
+                  Button('送入词萤伴读').id('ocr-send-lexiglow-article').layoutWeight(1).height(40).fontSize(12).backgroundColor($r('app.color.surface')).fontColor($r('app.color.brand')).onClick(() => this.sendOcrToLexiGlow(true))
+                  Button('词萤提取生词').id('ocr-send-lexiglow-words').layoutWeight(1).height(40).fontSize(12).backgroundColor($r('app.color.surface')).fontColor($r('app.color.brand')).onClick(() => this.sendOcrToLexiGlow(false))
+                }.width('100%')
+              }
             }
             if (this.toolId !== 'image-ocr') {
             Text(this.output.slice(0,16000)).fontSize(12).fontFamily('monospace').fontColor($r('app.color.text_primary')).copyOption(CopyOptions.InApp).padding(16).width('100%').backgroundColor($r('app.color.surface')).borderRadius(16)

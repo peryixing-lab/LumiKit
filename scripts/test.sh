@@ -10,3 +10,7 @@ LUMI_NODE_BIN="${LUMI_NODE_BIN:-/Applications/DevEco-Studio.app/Contents/tools/n
 "$LUMI_NODE_BIN" scripts/test-next-release.cjs
 "$LUMI_NODE_BIN" scripts/test-workbench.cjs
 "$LUMI_NODE_BIN" scripts/test-image-compression.cjs
+"$LUMI_NODE_BIN" scripts/test-search.cjs
+"$LUMI_NODE_BIN" scripts/test-material-packs.cjs
+"$LUMI_NODE_BIN" scripts/test-batch-files.cjs
+"$LUMI_NODE_BIN" scripts/test-release13.cjs

@@ -154,7 +154,18 @@ export class FileService {
 
   static async share(ctx: common.UIAbilityContext, path: string, name: string): Promise<void> {
     FileService.assertOwned(ctx, path);
-    const data = new systemShare.SharedData({ utd: uniformTypeDescriptor.UniformDataType.FILE, uri: fileUri.getUriFromPath(path), title: name });
+    const lower = (name || '').toLowerCase();
+    let shareUtd: string = uniformTypeDescriptor.UniformDataType.FILE;
+    if (lower.endsWith('.md') || lower.endsWith('.markdown')) {
+      shareUtd = 'general.markdown';
+      try {
+        const resolved = uniformTypeDescriptor.getUniformDataTypeByFilenameExtension('.md');
+        if (resolved && resolved.trim().length > 0) { shareUtd = resolved; }
+      } catch (_) {}
+    } else if (lower.endsWith('.txt')) {
+      shareUtd = 'general.plain-text';
+    }
+    const data = new systemShare.SharedData({ utd: shareUtd, uri: fileUri.getUriFromPath(path), title: name });
     await new systemShare.ShareController(data).show(ctx, { previewMode: systemShare.SharePreviewMode.DEFAULT, selectionMode: systemShare.SelectionMode.SINGLE });
   }
 
@@ -180,6 +191,9 @@ export class FileService {
   }
   private static async assertUnreferenced(path: string): Promise<void> {
     const token = JSON.stringify(path);
+    if ((await StorageService.getValue('material.packs', '[]')).includes(token)) {
+      throw new Error('此文件已关联材料包，请先在材料清单中解除绑定');
+    }
     for (const key of ['inventory.items', 'forms.responses', 'forms.autodraft']) {
       if ((await StorageService.getValue(key, 'null')).includes(token)) { throw new Error('此文件已关联物品或表单，请先解除附件关联'); }
     }
@@ -227,6 +241,8 @@ export class FileService {
     if (ext === 'xlsx') { return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; }
     if (ext === 'json') { return 'application/json'; }
     if (ext === 'csv') { return 'text/csv'; }
+    if (ext === 'zip') { return 'application/zip'; }
+    if (ext === 'md' || ext === 'markdown') { return 'text/markdown'; }
     return 'text/plain';
   }
 

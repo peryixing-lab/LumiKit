@@ -9,6 +9,7 @@ import { taskpool } from '@kit.ArkTS';
 import { FileService, WorkspaceFile } from '../../core/FileService';
 import { StorageService } from '../../core/StorageService';
 import { DataEngine, DataTable, NumericSummary, GroupSummary } from '../files/DataEngine';
+import { EcosystemBridge } from '../../core/EcosystemBridge';
 
 interface AnalysisProject { id: string; name: string; csv: string; savedAt: number; }
 
@@ -160,6 +161,16 @@ export struct AnalyticsPage {
       this.message='已保存分析项目，可从本页重新打开';this.isError=false;
     }catch(error){this.error(error as Error);}
   }
+  private async shareReportToLexiNote():Promise<void> {
+    if(this.busy || this.table.headers.length === 0){return;}
+    try{
+      const reportTitle = (this.source || '未命名分析') + '_数据分析报告';
+      const md = EcosystemBridge.buildAnalyticsReportMarkdown(this.source, this.table, this.field, this.numeric, this.stats, this.groups);
+      await EcosystemBridge.shareMarkdownToLexiNote(this.ctx(), reportTitle, md, 'analytics', '导出数据分析报告到知萤');
+      this.message = '分析报告已生成并保存在工作区，可在分享面板选择「知萤」';
+      this.isError = false;
+    }catch(error){this.error(error as Error);}
+  }
   private chartValue(group:GroupSummary):number{return this.metric===0?group.count:group.sum;}
   private drawChart():void {
     const ctx=this.canvas;const w=ctx.width;const h=ctx.height;
@@ -249,6 +260,7 @@ export struct AnalyticsPage {
               Button('导出分组汇总 CSV').id('analytics-export-groups').width('100%').height(40).fontSize(13).backgroundColor($r('app.color.brand_soft')).fontColor($r('app.color.brand')).onClick(()=>this.export('csv',true))
             }.padding(18).width('100%').backgroundColor($r('app.color.surface')).borderRadius(20)
             Row({space:10}){Button('导出 CSV').id('analytics-export-csv').height(46).layoutWeight(1).backgroundColor($r('app.color.brand')).fontColor($r('app.color.inverse_text')).onClick(()=>this.export('csv'));Button('导出 JSON').id('analytics-export-json').height(46).layoutWeight(1).backgroundColor($r('app.color.brand_soft')).fontColor($r('app.color.brand')).onClick(()=>this.export('json'));}.width('100%')
+            Button('沉淀分析报告到知萤笔记').id('analytics-share-lexinote').width('100%').height(46).backgroundColor($r('app.color.brand_soft')).fontColor($r('app.color.brand')).onClick(()=>this.shareReportToLexiNote())
             Button('保存分析项目').id('analytics-save-project').width('100%').height(46).backgroundColor($r('app.color.surface')).fontColor($r('app.color.brand')).onClick(()=>this.saveProject())
           }
           if(this.projects.length>0){

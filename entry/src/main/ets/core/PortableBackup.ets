@@ -8,6 +8,7 @@ import { FormResponse, FieldAnswer } from '../features/forms/FormModels';
 import { LumiFormDraft } from '../features/forms/FormDrafts';
 import { LumiCollection, validCollection } from '../features/workbench/WorkbenchModels';
 import { validateBackupDocument } from './BackupValidation';
+import { LumiMaterialPack, LumiMaterialItem } from '../features/materials/MaterialPackModels';
 
 export class LumiBackupEntry {
   source: string = '';
@@ -53,7 +54,7 @@ export function validatePortableManifest(manifest: LumiPortableManifest, payload
   for (const entry of manifest.files) {
     if (!entry || typeof entry.source !== 'string' || !entry.source || sources.has(entry.source) ||
       typeof entry.name !== 'string' || !entry.name || !Number.isSafeInteger(entry.size) || entry.size < 0 ||
-      entry.size > FileService.MAX_FILE_BYTES || !Number.isInteger(entry.crc) || entry.crc < 0 || entry.crc > 0xffffffff) {
+      entry.size > 1024 * 1024 * 1024 || !Number.isInteger(entry.crc) || entry.crc < 0 || entry.crc > 0xffffffff) {
       throw new Error('备份文件清单无效');
     }
     if (entry.details) {
@@ -70,6 +71,13 @@ export function validatePortableManifest(manifest: LumiPortableManifest, payload
     sources.add(entry.source); total += entry.size;
   }
   if (total !== payloadSize || total > 1024 * 1024 * 1024) { throw new Error('备份长度不符或超过 1 GB'); }
+  for (const document of metadata.documents) {
+    if (document.key === 'material.packs') {
+      for (const pack of JSON.parse(document.value) as LumiMaterialPack[]) {
+        if (pack.items.some((item: LumiMaterialItem): boolean => !!item.path && !sources.has(item.path))) { throw new Error('材料包包含未打包的文件，请重新关联后备份'); }
+      }
+    }
+  }
 }
 
 /** A bounded streaming container: magic + manifest length + UTF-8 manifest + file bytes. */
@@ -111,13 +119,18 @@ export class PortableBackup {
     const files = (await FileService.list(ctx, true)).filter((entry: WorkspaceFile) => !entry.name.toLowerCase().endsWith('.lumibak'));
     const metadata = JSON.parse(manifest.metadata) as LumiBackup;
     const attachments: LocalAttachment[] = [];
+    const materialPaths: string[] = [];
     for (const document of metadata.documents) {
       if (document.key === 'inventory.items') { for (const item of JSON.parse(document.value) as InventoryItem[]) { attachments.push(...item.attachments); } }
       if (document.key === 'forms.responses') { for (const response of JSON.parse(document.value) as FormResponse[]) { for (const answer of response.answers) { attachments.push(...answer.attachments); } } }
       if (document.key === 'forms.autodraft') { const draft = JSON.parse(document.value) as LumiFormDraft; if (draft) { for (const answer of draft.answers) { attachments.push(...answer.attachments); } } }
+      if (document.key === 'material.packs') { for (const pack of JSON.parse(document.value) as LumiMaterialPack[]) { for (const item of pack.items) { if (item.path) { materialPaths.push(item.path); } } } }
     }
     const missing = attachments.filter((attachment: LocalAttachment) => !files.some((file: WorkspaceFile) => file.path === attachment.path));
     if (missing.length) { throw new Error('有 ' + missing.length.toString() + ' 个附件缺失，请重新导入并关联后再完整备份'); }
+    if (materialPaths.some((path: string): boolean => !files.some((file: WorkspaceFile): boolean => file.path === path))) {
+      throw new Error('材料包中有文件缺失，请重新关联或解除关联后再完整备份');
+    }
     const total = files.reduce((sum: number, entry: WorkspaceFile) => sum + entry.size, 0);
     if (total > 1024 * 1024 * 1024) { throw new Error('完整备份上限为 1 GB，请先导出并清理较大的处理结果'); }
     for (let i = 0; i < files.length; i++) {

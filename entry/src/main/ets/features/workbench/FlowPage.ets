@@ -11,7 +11,10 @@ import { WorkbenchStore } from './WorkbenchStore';
 import { LumiCollection, LumiFlowSession, LumiFlowRecipe, LumiSavedPage } from './WorkbenchModels';
 import { LumiResultCard } from './ResultCard';
 
-export class LumiFlowRoute { kind: string = 'materials'; flowId: string = ''; recipeId: string = ''; }
+export class LumiFlowRoute {
+  kind: string = 'materials'; flowId: string = ''; recipeId: string = '';
+  filePaths: string[] = []; outputName: string = '';
+}
 @Builder
 export function lumiFlowBuilder() { LumiFlowPage() }
 @Component
@@ -45,6 +48,15 @@ export struct LumiFlowPage {
         if (param.recipeId) {
           const recipe = (await WorkbenchStore.recipes()).find((entry: LumiFlowRecipe) => entry.id === param.recipeId);
           if (recipe) { fresh.kind = recipe.kind; fresh.name = recipe.outputName; fresh.targetMB = recipe.targetMB; fresh.quality = recipe.quality; }
+        }
+        if (param.outputName) { fresh.name = FileService.cleanName(param.outputName).slice(0, 80); }
+        if (param.filePaths && param.filePaths.length) {
+          const inputs = param.filePaths.filter((path: string, index: number, all: string[]): boolean => all.indexOf(path) === index);
+          if (inputs.length > 20 || inputs.some((path: string): boolean => !this.files.some((file: WorkspaceFile): boolean =>
+            file.path === path && (file.mime.startsWith('image/') || (fresh.kind === 'materials' && file.mime === 'application/pdf'))))) {
+            throw new Error('合并最多接收 20 个可用的图片或 PDF，请返回材料包检查文件');
+          }
+          fresh.inputs = inputs.slice();
         }
         this.session = fresh;
       }

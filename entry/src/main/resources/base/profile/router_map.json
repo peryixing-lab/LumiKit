@@ -1,6 +1,11 @@
 {
   "routerMap": [
     {
+      "name": "material-packs",
+      "pageSourceFile": "src/main/ets/features/materials/MaterialPacksPage.ets",
+      "buildFunction": "lumiMaterialPacksBuilder"
+    },
+    {
       "name": "fileTool",
       "pageSourceFile": "src/main/ets/features/files/FileToolsPage.ets",
       "buildFunction": "fileToolBuilder"

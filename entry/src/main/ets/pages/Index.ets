@@ -1,11 +1,11 @@
 import { WorkbenchStore } from '../features/workbench/WorkbenchStore';
-import { LumiFileSession, LumiFlowSession, LumiFlowRecipe } from '../features/workbench/WorkbenchModels';
+import { LumiCollection, LumiFileSession, LumiFlowSession, LumiFlowRecipe } from '../features/workbench/WorkbenchModels';
 import { LumiFlowRoute } from '../features/workbench/FlowPage';
 import { LumiResultCard } from '../features/workbench/ResultCard';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import { accessibility } from '@kit.AccessibilityKit';
 import { fileIo as fs, picker } from '@kit.CoreFileKit';
-import { CommonModifier, curves, uiMaterial } from '@kit.ArkUI';
+import { CommonModifier, curves, uiMaterial, promptAction } from '@kit.ArkUI';
 import { LumiIcon } from '../components/LumiIcon';
 import { LumiNavigation } from '../components/LumiNavigation';
 import { LumiAppearancePicker } from '../components/LumiAppearancePicker';
@@ -22,6 +22,9 @@ import { TaskManager, TaskRecord } from '../core/TaskManager';
 import { FileToolRouteParam } from '../features/files/FileToolsPage';
 import { AnalyticsRouteParam } from '../features/analytics/AnalyticsPage';
 import { DeveloperRouteParam } from '../features/developer/DeveloperPage';
+import { WorkspaceSearch } from '../core/WorkspaceSearch';
+import { LumiIncomingAction, lumiIncomingActions, lumiIncomingFiles } from '../core/IncomingActions';
+import { BackupDelivery, LumiBackupDelivery } from '../core/BackupDelivery';
 
 @Component
 struct LumiFilterChip {
@@ -43,6 +46,7 @@ struct Index {
   @StorageProp('lumiBottomInset') bottomInset: number = 0;
   @StorageProp('lumiIncomingError') @Watch('handleIncomingError') incomingError: string = '';
   @StorageProp('lumiOpenItemId') @Watch('handleReminderOpen') openItemId: string = '';
+  @StorageProp('lumiOpenToolId') @Watch('handleToolOpen') openToolId: string = '';
   @StorageProp('lumiIncomingPaths') @Watch('handleIncoming') incomingPaths: string = '';
   @State fileSessions: LumiFileSession[] = [];
   @State flows: LumiFlowSession[] = [];
@@ -53,6 +57,8 @@ struct Index {
   @State searchForms: LocalForm[] = [];
   @State backupStatus: string = '';
   @State lastBackup: string = '';
+  @State backupDelivery: LumiBackupDelivery = new LumiBackupDelivery();
+  @State searchCollections: LumiCollection[] = [];
   @State ready: boolean = false;
   @State startupError: string = '';
   @State startupStep: number = 0;
@@ -74,6 +80,7 @@ struct Index {
   @State titleCollapsed: boolean[] = [false, false, false, false];
   private listening: boolean = false;
   private startupRunning: boolean = false;
+  private choosingIncoming: boolean = false;
   private mainScroller: Scroller = new Scroller();
   private tabScrollers: Scroller[] = [new Scroller(), new Scroller(), new Scroller(), new Scroller()];
   private tabsController: TabsController = new TabsController();
@@ -152,6 +159,7 @@ struct Index {
       this.startupStep = 2;
       await this.refresh();
       this.lastBackup = await StorageService.getSetting('lastCompleteBackup', '');
+      this.backupDelivery = await BackupDelivery.load();
       if (this.reduceMotion) { this.ready = true; }
       else { this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, () => { this.ready = true; }); }
     } catch (error) {
@@ -160,7 +168,7 @@ struct Index {
         (this.startupStep === 2 ? '文件工作区暂时无法读取，请重试。已有内容会保留。' :
           '本地数据暂时无法读取，请重试。已有内容会保留。');
     } finally { this.startupRunning = false; }
-    if (this.ready) { this.handleIncoming(); this.handleReminderOpen(); this.handleIncomingError(); }
+    if (this.ready) { this.handleIncoming(); this.handleReminderOpen(); this.handleToolOpen(); this.handleIncomingError(); }
   }
   private async refresh(): Promise<void> {
     this.searchItems = JSON.parse(await StorageService.getValue('inventory.items', '[]')) as InventoryItem[];
@@ -168,6 +176,7 @@ struct Index {
     this.fileSessions = await WorkbenchStore.fileSessions();
     this.flows = await WorkbenchStore.flows();
     this.recipes = await WorkbenchStore.recipes();
+    this.searchCollections = await WorkbenchStore.collections();
     this.hasFormDraft = await StorageService.getValue('forms.autodraft', 'null') !== 'null';
     this.history = await StorageService.getHistory();
     this.workspace = await FileService.list(this.context());
@@ -196,7 +205,7 @@ struct Index {
     );
   }
   private openTool(id: string, filePath: string = ''): void {
-    if (id === 'inventory' || id === 'forms' || id === 'help') { this.pathStack.pushPathByName(id, undefined); return; }
+    if (id === 'inventory' || id === 'forms' || id === 'help' || id === 'material-packs') { this.pathStack.pushPathByName(id, undefined); return; }
     if (id === 'analytics') {
       const param = new AnalyticsRouteParam();
       param.filePath = filePath;
@@ -316,10 +325,24 @@ struct Index {
     this.profileBusy = true;
     try {
       const file = await PortableBackup.create(this.context(), (message: string) => { this.backupStatus = message; });
-      this.lastBackup = new Date().toLocaleString() + ' · ' + FileService.sizeLabel(file.size);
-      await StorageService.setSetting('lastCompleteBackup', this.lastBackup);
-      this.backupStatus = '完整备份已保存在工作区，可再次导出。';
-      await FileService.exportFile(this.context(), file.path, file.name);
+      this.backupDelivery = await BackupDelivery.generated(file);
+      this.backupStatus = '完整备份已在本机生成，尚未导出。';
+      await this.refresh();
+      this.backupDelivery = await BackupDelivery.exportPending(this.context(), this.backupDelivery);
+      this.backupStatus = '完整备份已导出至你选择的位置。';
+      this.toast('完整备份已导出');
+    } catch (error) {
+      if (this.backupDelivery.path && !this.backupDelivery.exportedAt) { this.backupStatus = '本机备份已保留，尚未导出；可继续导出。'; }
+      this.toast((error as Error).message || '备份导出失败');
+    }
+    finally { this.profileBusy = false; }
+  }
+  private async exportPendingBackup(): Promise<void> {
+    if (this.profileBusy) { return; }
+    this.profileBusy = true;
+    try {
+      this.backupDelivery = await BackupDelivery.exportPending(this.context(), this.backupDelivery);
+      this.backupStatus = '完整备份已导出至你选择的位置。';
       this.toast('完整备份已导出');
     } catch (error) { this.toast((error as Error).message || '备份导出失败'); }
     finally { this.profileBusy = false; }
@@ -358,21 +381,43 @@ struct Index {
     if (!this.ready || !this.openItemId) { return; }
     const id = this.openItemId; AppStorage.setOrCreate('lumiOpenItemId', ''); this.openRecord('inventory', id);
   }
+  private handleToolOpen(): void {
+    if (!this.ready || !this.openToolId) { return; }
+    const id = this.openToolId; AppStorage.setOrCreate('lumiOpenToolId', '');
+    if (ToolRegistry.find(id) || id === 'inventory' || id === 'forms' || id === 'help' || id === 'analytics' || id === 'material-packs') {
+      this.openTool(id);
+    }
+  }
   private handleIncoming(): void {
-    if (!this.ready || !this.incomingPaths) { return; }
-    const paths = JSON.parse(this.incomingPaths) as string[];
+    if (!this.ready || !this.incomingPaths || this.choosingIncoming) { return; }
+    let paths: string[] = [];
+    try { paths = JSON.parse(this.incomingPaths) as string[]; }
+    catch (_) { AppStorage.setOrCreate('lumiIncomingPaths', ''); this.toast('分享文件记录无效，请重新分享'); return; }
     AppStorage.setOrCreate('lumiIncomingPaths', '');
-    if (!paths.length) { return; }
-    this.refresh().then(() => {
-      const files = this.workspace.filter((file: WorkspaceFile) => paths.includes(file.path));
-      if (!files.length) { return; }
-      if (files.length === 1 && files[0].name.toLowerCase().endsWith('.xlsx')) { this.openTool('analytics', files[0].path); return; }
-      const param = new FileToolRouteParam();
-      param.filePaths = files.map((file: WorkspaceFile) => file.path);
-      param.toolId = files.every((file: WorkspaceFile) => file.mime === 'application/pdf') ? (files.length > 1 ? 'pdf-merge' : 'pdf-edit') :
-        files.every((file: WorkspaceFile) => file.mime.startsWith('image/')) ? (files.length > 1 ? 'images-pdf' : 'image-convert') : 'file-workspace';
-      this.pathStack.pushPathByName('fileTool', param);
-    }).catch(() => { this.toast('分享文件导入失败，请重新分享'); });
+    if (!Array.isArray(paths) || !paths.length) { return; }
+    this.choosingIncoming = true;
+    this.chooseIncoming(paths).catch(() => { this.toast('文件已保存在工作区，可稍后处理'); }).finally(() => {
+      this.choosingIncoming = false; this.handleIncoming();
+    });
+  }
+  private async chooseIncoming(paths: string[]): Promise<void> {
+    await this.refresh();
+    const files = lumiIncomingFiles(paths, this.workspace);
+    if (!files.length) { return; }
+    const actions = lumiIncomingActions(files);
+    let chosen: LumiIncomingAction = actions[0];
+    if (actions.length > 1) {
+      const options: promptAction.ActionMenuOptions = { title: '已导入 ' + files.length.toString() + ' 个文件，你想做什么？',
+        buttons: [{ text: actions[0].title, color: '#2864DA' }] };
+      for (let index = 1; index < actions.length; index++) { options.buttons.push({ text: actions[index].title, color: '#2864DA' }); }
+      const choice: promptAction.ActionMenuSuccessResponse = await this.getUIContext().getPromptAction().showActionMenu(options);
+      if (choice.index < 0 || choice.index >= actions.length) { return; }
+      chosen = actions[choice.index];
+    }
+    if (chosen.toolId === 'analytics') { this.openTool('analytics', files[0].path); return; }
+    const param = new FileToolRouteParam(); param.toolId = chosen.toolId;
+    param.filePaths = files.map((file: WorkspaceFile): string => file.path);
+    this.pathStack.pushPathByName('fileTool', param);
   }
   private matchingItems(): InventoryItem[] {
     const term = this.query.trim().toLowerCase();
@@ -384,7 +429,10 @@ struct Index {
   }
   private matchingFiles(): WorkspaceFile[] {
     const term = this.query.trim().toLowerCase();
-    return term ? this.workspace.filter((file: WorkspaceFile) => file.name.toLowerCase().includes(term)).slice(0, 20) : [];
+    return term ? this.workspace.filter((file: WorkspaceFile): boolean => WorkspaceSearch.matches(file, term, this.searchCollections)).slice(0, 20) : [];
+  }
+  private showMaterialPacks(): boolean {
+    return !this.query.trim() || ['材料', '清单', '报名', '入职', '报销', '打包'].some((word: string): boolean => this.query.includes(word));
   }
   private openRecord(kind: string, id: string): void {
     const param = new LumiRecordRouteParam(); param.recordId = id;
@@ -566,14 +614,15 @@ struct Index {
       }.width('100%')
       Button({ type: ButtonType.Normal }) {
         Column({ space: 6 }) {
-          Text('提交材料 →').fontSize(21).fontWeight(FontWeight.Bold).fontColor($r('app.color.brand_ink'))
-          Text('选好文件，整理页面，检查大小，再分享').fontSize(13).fontColor($r('app.color.brand_ink'))
+          Text('准备一个材料包 →').fontSize(21).fontWeight(FontWeight.Bold).fontColor($r('app.color.brand_ink'))
+          Text('按清单备齐，检查格式与大小，一次交付').fontSize(13).fontColor($r('app.color.brand_ink'))
         }.width('100%').alignItems(HorizontalAlign.Start).padding(22)
-      }.id('home-materials').padding(0).width('100%').borderRadius(24).backgroundColor($r('app.color.hero')).onClick(() => this.openFlow('materials'))
+      }.id('home-material-packs').padding(0).width('100%').borderRadius(24).backgroundColor($r('app.color.hero')).onClick(() => this.openTool('material-packs'))
       Row({ space: 8 }) {
+        Button('合并提交材料').id('home-materials').layoutWeight(1).height(46).fontSize(13).backgroundColor($r('app.color.surface')).fontColor($r('app.color.brand')).onClick(() => this.openFlow('materials'))
         Button('截图整理成 PDF').id('home-screenshots').layoutWeight(1).height(46).fontSize(13).backgroundColor($r('app.color.surface')).fontColor($r('app.color.brand')).onClick(() => this.openFlow('screenshots'))
-        Button('登记一件物品').layoutWeight(1).height(46).fontSize(13).backgroundColor($r('app.color.surface')).fontColor($r('app.color.brand')).onClick(() => { const param = new LumiRecordRouteParam(); param.createNew = true; this.pathStack.pushPathByName('inventory', param); })
       }.width('100%')
+      Button('登记一件物品', { buttonStyle: ButtonStyleMode.TEXTUAL }).fontColor($r('app.color.brand')).onClick(() => { const param = new LumiRecordRouteParam(); param.createNew = true; this.pathStack.pushPathByName('inventory', param); })
     }.width('100%')
   }
   @Builder
@@ -693,6 +742,10 @@ struct Index {
     Column({ space: 16 }) {
       this.pageHeading('每一件小事，都有解法。', `${TOOLS.length} 个本地工具，陪你从容处理日常。`, 1)
       this.searchBox('搜索工具、文件、物品和表单')
+      if (this.showMaterialPacks()) {
+        Button('材料包 · 按清单准备与交付', { buttonStyle: ButtonStyleMode.TEXTUAL }).id('tools-material-packs').width('100%').height(46)
+          .fontColor($r('app.color.brand')).onClick(() => this.openTool('material-packs'))
+      }
       if (this.query.trim()) {
         ForEach(this.matchingItems(), (item: InventoryItem) => {
           Button('物品 · ' + item.name).width('100%').height(46).backgroundColor($r('app.color.surface')).fontColor($r('app.color.brand')).onClick(() => this.openRecord('inventory', item.id))
@@ -713,7 +766,7 @@ struct Index {
             .onClick(() => { this.favoriteOnly = false; this.category = 'all'; })
         }.width('100%')
       }
-      if (this.visibleTools().length === 0 && this.matchingItems().length === 0 && this.matchingForms().length === 0 && this.matchingFiles().length === 0) { this.emptyState('search', '暂时没有找到', '换个关键词，或从“全部”里看看。') }
+      if (!this.showMaterialPacks() && this.visibleTools().length === 0 && this.matchingItems().length === 0 && this.matchingForms().length === 0 && this.matchingFiles().length === 0) { this.emptyState('search', '暂时没有找到', '换个关键词，或从“全部”里看看。') }
       if (this.toolColumns() === 3) {
         Row({ space: 14 }) {
           Column({ space: 14 }) {
@@ -840,7 +893,7 @@ struct Index {
       Column({ space: 7 }) {
         Text('集萤 LumiKit').fontSize(22).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
         Text('让繁杂，变简单。').fontSize(13).fontColor($r('app.color.text_secondary'))
-        Text('本地工具工作台 · 1.2.0').fontSize(11).fontColor($r('app.color.brand'))
+        Text('本地工具工作台 · 1.3.0').fontSize(11).fontColor($r('app.color.brand'))
       }.alignItems(HorizontalAlign.Start)
     }.padding(24).width('100%').backgroundColor($r('app.color.hero')).borderRadius(28)
   }
@@ -869,12 +922,24 @@ struct Index {
   @Builder
   profileBackupSection() {
     Column({ space: 12 }) {
-      if (this.lastBackup) { Text('最近备份：' + this.lastBackup).fontSize(12).fontColor($r('app.color.text_secondary')).width('100%') }
+      if (this.backupDelivery.generatedAt) {
+        Text('最近本机生成：' + new Date(this.backupDelivery.generatedAt).toLocaleString()).fontSize(12).fontColor($r('app.color.text_secondary')).width('100%')
+        Text(this.backupDelivery.exportedAt ? '这份备份已导出' : '这份备份尚未导出').fontSize(12).fontColor($r('app.color.brand')).width('100%')
+      } else if (this.lastBackup) {
+        Text('旧版本机生成记录：' + this.lastBackup + '（导出状态未知）').fontSize(12).fontColor($r('app.color.text_secondary')).width('100%')
+      }
+      if (this.backupDelivery.lastExportedAt) {
+        Text('最近成功导出：' + new Date(this.backupDelivery.lastExportedAt).toLocaleString() + ' · ' + this.backupDelivery.lastExportedName).fontSize(12).fontColor($r('app.color.text_secondary')).width('100%')
+      }
       if (this.backupStatus) { Text(this.backupStatus).fontSize(12).fontColor($r('app.color.brand')).width('100%') }
       Text('数据备份').fontSize(15).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary')).width('100%')
-      Text('完整备份包含物品、表单、分析项目、记录及工作区文件，可换机恢复附件。').fontSize(12).lineHeight(20).fontColor($r('app.color.text_secondary')).width('100%')
+      Text('完整备份包含材料包、物品、表单、分析项目、记录及工作区文件。生成后请导出到所选位置，换机时可恢复附件。').fontSize(12).lineHeight(20).fontColor($r('app.color.text_secondary')).width('100%')
+      if (this.backupDelivery.path && !this.backupDelivery.exportedAt) {
+        Button('继续导出已生成的备份', { buttonStyle: ButtonStyleMode.TEXTUAL }).id('backup-continue-export').width('100%').fontColor($r('app.color.brand'))
+          .enabled(!this.profileBusy).onClick(() => { this.exportPendingBackup(); })
+      }
       Row({ space: 12 }) {
-        Button('导出完整备份').layoutWeight(1).height(46).fontSize(13).backgroundColor($r('app.color.brand')).fontColor($r('app.color.inverse_text'))
+        Button('生成并导出备份').layoutWeight(1).height(46).fontSize(13).backgroundColor($r('app.color.brand')).fontColor($r('app.color.inverse_text'))
           .enabled(!this.profileBusy).onClick(() => { this.backup(); })
         Button('恢复备份').layoutWeight(1).height(46).fontSize(13)
           .backgroundColor(this.wide() ? $r('app.color.soft_surface') : $r('app.color.surface')).fontColor($r('app.color.brand'))
@@ -904,7 +969,7 @@ struct Index {
             })
             this.settingRow('folder', '清理临时缓存', '保留工作区文件、物品、表单与记录', () => { this.cleanCache(); })
             this.settingRow('info', '关于集萤', '六种工具，一处安心的工作台', () => {
-              this.information('集萤 LumiKit · 1.2.0', '让繁杂，变简单。\n\nHarmonyOS 原生本地工具工作台。\n26 个本地工具，支持完整备份、PDF 页面整理、图片文字识别、Excel 数据分析与到期提醒。\n\nPDF 图像压缩会生成静态副本，原件保留。文字识别和到期通知取决于设备系统能力。');
+              this.information('集萤 LumiKit · 1.3.0', '让繁杂，变简单。\n\nHarmonyOS 原生本地工具工作台。\n26 个本地工具，支持材料清单、批量文件交付、完整备份、PDF 页面整理、图片文字识别与表格分析。\n\nPDF 图像压缩会生成静态副本，原件保留。文字识别和到期通知取决于设备系统能力。');
             })
           }.layoutWeight(1)
         }.width('100%').alignItems(VerticalAlign.Top)
@@ -920,7 +985,7 @@ struct Index {
         })
         this.settingRow('folder', '清理临时缓存', '保留工作区文件、物品、表单与记录', () => { this.cleanCache(); })
         this.settingRow('info', '关于集萤', '六种工具，一处安心的工作台', () => {
-          this.information('集萤 LumiKit · 1.2.0', '让繁杂，变简单。\n\nHarmonyOS 原生本地工具工作台。\n26 个本地工具，支持完整备份、PDF 页面整理、图片文字识别、Excel 数据分析与到期提醒。\n\nPDF 图像压缩会生成静态副本，原件保留。文字识别和到期通知取决于设备系统能力。');
+          this.information('集萤 LumiKit · 1.3.0', '让繁杂，变简单。\n\nHarmonyOS 原生本地工具工作台。\n26 个本地工具，支持材料清单、批量文件交付、完整备份、PDF 页面整理、图片文字识别与表格分析。\n\nPDF 图像压缩会生成静态副本，原件保留。文字识别和到期通知取决于设备系统能力。');
         })
       }
       this.localNotice()

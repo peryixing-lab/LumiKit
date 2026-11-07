@@ -13,6 +13,7 @@ import { FileService, WorkspaceFile } from '../../core/FileService';
 import { InventoryReminders, inventoryReminderPlans } from './InventoryReminders';
 import { LumiRecordRouteParam } from '../../core/IncomingRequest';
 import { InventoryFiles } from './InventoryFiles';
+import { EcosystemBridge } from '../../core/EcosystemBridge';
 
 @Builder
 export function inventoryBuilder() {
@@ -239,6 +240,24 @@ export struct InventoryPage {
     const copy = JSON.parse(JSON.stringify(this.draft)) as InventoryItem;
     copy.id = newLocalId('item'); copy.name += '（副本）'; copy.createdAt = Date.now(); copy.archived = false;
     copy.lending = []; copy.warrantyReminderDate = ''; this.draft = copy; this.mode = 'edit';
+  }
+  private async shareItemToLexiNote(): Promise<void> {
+    if (this.busy || !this.draft.name) { return; }
+    try {
+      const md = EcosystemBridge.buildInventoryMarkdown(this.draft, this.warranty(this.draft));
+      await EcosystemBridge.shareMarkdownToLexiNote(this.context(), this.draft.name, md, 'inventory', '导出物品档案到知萤');
+      this.toast('物品双链档案已生成，可在分享面板选择「知萤」');
+    } catch (error) {
+      this.toast((error as Error).message || '暂时无法打开系统分享面板');
+    }
+  }
+  private async openItemNoteInLexiNote(): Promise<void> {
+    if (!this.draft.name) { return; }
+    try {
+      await EcosystemBridge.openNoteInLexiNote(this.context(), this.draft.name, '物品档案');
+    } catch (_) {
+      this.toast('未检测到知萤笔记，可通过「沉淀档案到知萤」分享导出');
+    }
   }
   private async capturePhoto(): Promise<void> {
     this.busy = true;
@@ -520,6 +539,10 @@ export struct InventoryPage {
         this.information('备注', this.draft.notes)
       }.padding(22).width('100%').backgroundColor($r('app.color.surface')).borderRadius(24).alignItems(HorizontalAlign.Start)
       Button('复制此物品').id('inventory-duplicate').width('100%').onClick(() => this.duplicateItem())
+      Row({ space: 8 }) {
+        Button('沉淀档案到知萤').id('inventory-share-lexinote').layoutWeight(1).height(42).fontSize(13).backgroundColor($r('app.color.brand_soft')).fontColor($r('app.color.brand')).enabled(!this.busy).onClick(() => this.shareItemToLexiNote())
+        Button('知萤打开关联笔记').id('inventory-open-lexinote').layoutWeight(1).height(42).fontSize(13).backgroundColor($r('app.color.surface')).fontColor($r('app.color.brand')).enabled(!this.busy).onClick(() => this.openItemNoteInLexiNote())
+      }.width('100%')
       if (this.reminderWarning) { Text(this.reminderWarning).fontSize(12).fontColor($r('app.color.error')).width('100%') }
       Button(this.calendarReminders ? '更新日历提醒' : '启用 / 更新到期通知').id('inventory-enable-reminders')
         .width('100%').enabled(!this.busy).onClick(() => this.enableReminders())

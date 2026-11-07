@@ -20,6 +20,20 @@ export default class EntryAbility extends UIAbility {
   onNewWant(want: Want, _launchParam: AbilityConstant.LaunchParam): void { this.receiveShare(want); }
 
   private async receiveShare(want: Want): Promise<void> {
+    const rawUri = typeof want.uri === 'string' ? want.uri.trim() : '';
+    if (/^lumikit:\/\//i.test(rawUri)) {
+      const itemMatch = /^lumikit:\/\/inventory\?itemId=([A-Za-z0-9_-]{1,128})$/i.exec(rawUri);
+      if (itemMatch) {
+        AppStorage.setOrCreate('lumiOpenItemId', itemMatch[1]);
+        return;
+      }
+      const toolMatch = /^lumikit:\/\/tool\?id=([a-z0-9-]{1,64})$/i.exec(rawUri);
+      if (toolMatch) {
+        AppStorage.setOrCreate('lumiOpenToolId', toolMatch[1].toLowerCase());
+        return;
+      }
+      return;
+    }
     if (want.action !== 'ohos.want.action.sendData' && want.action !== 'ohos.want.action.viewData') {
       const itemId = want.parameters?.['lumiItemId'];
       if (typeof itemId === 'string') { AppStorage.setOrCreate('lumiOpenItemId', itemId); }
